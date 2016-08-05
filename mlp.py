@@ -168,7 +168,13 @@ model  = load_mlp_model('model/fine-tuning-mlp.model')
 vgg    = load_vgg_model('model/vgg19.pkl')
 
 
-def predict(x_data):
+def predict(x_data, gpu=-1):
+
+    xp = cuda.cupy if gpu >= 0 else np
+    if gpu >= 0:
+        model.to_gpu()
+        x_data = cuda.to_gpu(x_data)
+
     x = Variable(x_data, volatile='on')
     h1 = F.relu(model.l1(x))
     h2 = F.relu(model.l2(h1))
@@ -176,14 +182,19 @@ def predict(x_data):
     return F.softmax(y), h2
 
 
-def classify(msgid, N=1):
-    array = np.asarray(get_image(msgid))
-    x = np.ascontiguousarray(array)
+def classify(msgid, N=1, gpu=-1):
+
+    xp = cuda.cupy if gpu >= 0 else np
+    if gpu >= 0:
+        vgg.to_gpu()
+
+    array = xp.asarray(get_image(msgid))
+    x = xp.ascontiguousarray(array)
     h = Variable(x, volatile=True)
     feature, = vgg(inputs={'data': h}, outputs=['fc7'], train=False)
     x = feature.data[0,].reshape((1, 4096))
-    y, f = predict(x)
-    scores = y.data[0,]
+    y, f = predict(x, gpu=gpu)
+    scores = cuda.to_cpu(y.data[0])
 
     ret = []
     for i, idx in enumerate(np.argsort(scores)[-1::-1]):
@@ -202,11 +213,17 @@ if __name__ == '__main__':
 
     from argparse import ArgumentParser
     parser = ArgumentParser(description='Chainer example: test a multi-layer perceptron for image detection.')
+    parser.add_argument('--gpu', type=int, default=-1, help='GPU ID (negative value indicates CPU)')
     parser.add_argument('--eval', type=unicode, default='shiba.jpeg', help='file for evaluation (.jpg)')
     args = parser.parse_args()
 
+    if args.gpu >= 0:
+        cuda.get_device(args.gpu).use()
+
+    xp = cuda.cupy if args.gpu >= 0 else np
+
     if args.eval:
-        ret = classify(args.eval, N=10)
+        ret = classify(args.eval, N=10, gpu=args.gpu)
         for i, ans in enumerate(ret):
             score = float(ans['score'])
             label = ans['label']
